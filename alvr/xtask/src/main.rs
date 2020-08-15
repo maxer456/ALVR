@@ -169,7 +169,7 @@ fn zip_dir(dir: &Path) -> BResult {
     Ok(())
 }
 
-pub fn build_server(is_release: bool) -> BResult {
+pub fn build_server(is_release: bool, update_deps: bool) -> BResult {
     let build_type = if is_release { "release" } else { "debug" };
     let build_flag = if is_release { "--release" } else { "" };
 
@@ -182,7 +182,9 @@ pub fn build_server(is_release: bool) -> BResult {
     reset_server_build_folder()?;
     fs::create_dir_all(&driver_dst_dir)?;
 
-    run("cargo update")?;
+    if update_deps {
+        run("cargo update")?;
+    }
 
     run(&format!(
         "cargo build -p alvr_server_driver -p alvr_web_server -p alvr_server_bootstrap {}",
@@ -264,7 +266,7 @@ pub fn build_client(is_release: bool) -> BResult {
 }
 
 pub fn build_publish() -> BResult {
-    build_server(true)?;
+    build_server(true, false)?;
     build_client(true)?;
     zip_dir(&server_build_dir())?;
 
@@ -312,7 +314,7 @@ fn main() {
 
         if args.finish().is_ok() {
             match subcommand.as_str() {
-                "build-server" => ok_or_exit(build_server(is_release)),
+                "build-server" => ok_or_exit(build_server(is_release), true),
                 "build-client" => ok_or_exit(build_client(is_release)),
                 "publish" => ok_or_exit(build_publish()),
                 "clean" => remove_build_dir(),
