@@ -6,6 +6,10 @@ jobs:
   clippy_check:
     # clippy and rustfmt (stable) already included
     runs-on: windows-latest
+    env:
+      # For bindgen to find libclang.dll, we need to give it the path to the Visual Studio package.
+      # This is specific to the GitHub windows-latest runner.
+      LIBCLANG_PATH: 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Tools\Llvm\x64\bin'
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/clippy-check@v1
