@@ -1,5 +1,5 @@
 /*
-* Copyright 2017-2018 NVIDIA Corporation.  All rights reserved.
+* Copyright 2017-2020 NVIDIA Corporation.  All rights reserved.
 *
 * Please refer to the NVIDIA end user license agreement (EULA) associated
 * with this source code for terms and conditions that govern your use of
@@ -17,10 +17,9 @@
 #include <sstream>
 #include <iterator>
 #include <cstring>
-#include "Logger.h"
+#include <functional>
 
 #ifndef _WIN32
-#include <cstring>
 inline bool operator==(const GUID &guid1, const GUID &guid2) {
     return !memcmp(&guid1, &guid2, sizeof(GUID));
 }
@@ -30,6 +29,12 @@ inline bool operator!=(const GUID &guid1, const GUID &guid2) {
 }
 #endif
 
+/*
+ * Helper class for parsing generic encoder options and preparing encoder
+ * initialization parameters. This class also provides some utility methods
+ * which generate verbose descriptions of the provided set of encoder
+ * initialization parameters.
+ */
 class NvEncoderInitParam {
 public:
     NvEncoderInitParam(const char *szParam = "", 
@@ -54,23 +59,16 @@ public:
                 ParseString("-codec", tokens[i], vCodec, szCodecNames, &guidCodec);
                 continue;
             }
-            if (bLowLatency)
-            {
-                if (tokens[i] == "-preset" && ++i != tokens.size()) {
-                    ParseString("-preset", tokens[i], vLowLatencyPreset, szLowLatencyPresetNames, &guidPreset);
-                    continue;
-                }
+            if (tokens[i] == "-preset" && ++i != tokens.size()) {
+                ParseString("-preset", tokens[i], vPreset, szPresetNames, &guidPreset);
+                continue;
             }
-            else
+            if (tokens[i] == "-tuninginfo" && ++i != tokens.size())
             {
-                if (tokens[i] == "-preset" && ++i != tokens.size()) {
-                    ParseString("-preset", tokens[i], vPreset, szPresetNames, &guidPreset);
-                    continue;
-                }
+                ParseString("-tuninginfo", tokens[i], vTuningInfo, szTuningInfoNames, &m_TuningInfo);
+                continue;
             }
         }
-
-        if (bLowLatency) guidPreset = NV_ENC_PRESET_LOW_LATENCY_DEFAULT_GUID;
     }
     virtual ~NvEncoderInitParam() {}
     virtual bool IsCodecH264() {
@@ -80,39 +78,69 @@ public:
     virtual bool IsCodecHEVC() {
         return GetEncodeGUID() == NV_ENC_CODEC_HEVC_GUID;
     }
-    std::string GetHelpMessage(bool bMeOnly = false, bool bUnbuffered = false, bool bHide444 = false)
+    std::string GetHelpMessage(bool bMeOnly = false, bool bUnbuffered = false, bool bHide444 = false, bool bOutputInVidMem = false)
     {
         std::ostringstream oss;
-            oss << "-codec       Codec: " << szCodecNames << std::endl
-                << "-preset      Preset: " << (bLowLatency ? szLowLatencyPresetNames : szPresetNames) << std::endl
-                << "-profile     H264: " << szH264ProfileNames << "; HEVC: " << szHevcProfileNames << std::endl;
+
+        if (bOutputInVidMem && bMeOnly)
+        {
+            oss << "-codec       Codec: " << "h264" << std::endl;
+        }
+        else
+        {
+            oss << "-codec       Codec: " << szCodecNames << std::endl;
+        }
+
+        oss << "-preset      Preset: " << szPresetNames << std::endl
+            << "-profile     H264: " << szH264ProfileNames;
+
+        if (bOutputInVidMem && bMeOnly)
+        {
+            oss << std::endl;
+        }
+        else
+        {
+            oss << "; HEVC: " << szHevcProfileNames << std::endl;
+        }
+
+        if (!bMeOnly)
+        {
+            if (bLowLatency == false)
+                oss << "-tuninginfo  TuningInfo: " << szTuningInfoNames << std::endl;
+            else
+                oss << "-tuninginfo  TuningInfo: " << szLowLatencyTuningInfoNames << std::endl;
+            oss << "-multipass   Multipass: " << szMultipass << std::endl;
+        }
+
         if (!bHide444 && !bLowLatency)
         {
             oss << "-444         (Only for RGB input) YUV444 encode" << std::endl;
         }
         if (bMeOnly) return oss.str();
-        oss << "-rc          Rate control mode: " << szRcModeNames << std::endl
-            << "-fps         Frame rate" << std::endl
-            << "-gop         Length of GOP (Group of Pictures)" << std::endl;
+        oss << "-fps         Frame rate" << std::endl;
+
         if (!bUnbuffered && !bLowLatency)
         {
             oss << "-bf          Number of consecutive B-frames" << std::endl;
         }
-        oss << "-bitrate     Average bit rate, can be in unit of 1, K, M" << std::endl
-            << "-maxbitrate  Max bit rate, can be in unit of 1, K, M" << std::endl
-            << "-vbvbufsize  VBV buffer size in bits, can be in unit of 1, K, M" << std::endl
-            << "-vbvinit     VBV initial delay in bits, can be in unit of 1, K, M" << std::endl;
+
         if (!bLowLatency)
         {
-            oss << "-aq          Enable spatial AQ and set its stength (range 1-15, 0-auto)" << std::endl
-                << "-temporalaq  (No value) Enable temporal AQ" << std::endl;
+            oss << "-rc          Rate control mode: " << szRcModeNames << std::endl
+                << "-gop         Length of GOP (Group of Pictures)" << std::endl
+                << "-bitrate     Average bit rate, can be in unit of 1, K, M" << std::endl
+                << "-maxbitrate  Max bit rate, can be in unit of 1, K, M" << std::endl
+                << "-vbvbufsize  VBV buffer size in bits, can be in unit of 1, K, M" << std::endl
+                << "-vbvinit     VBV initial delay in bits, can be in unit of 1, K, M" << std::endl
+                << "-aq          Enable spatial AQ and set its stength (range 1-15, 0-auto)" << std::endl
+                << "-temporalaq  (No value) Enable temporal AQ" << std::endl
+                << "-cq          Target constant quality level for VBR mode (range 1-51, 0-auto)" << std::endl;
         }
         if (!bUnbuffered && !bLowLatency)
         {
-            oss << "-lookahead   Maximum depth of lookahead (range 0-32)" << std::endl;
+            oss << "-lookahead   Maximum depth of lookahead (range 0-(31 - number of B frames))" << std::endl;
         }
-        oss << "-cq          Target constant quality level for VBR mode (range 1-51, 0-auto)" << std::endl
-            << "-qmin        Min QP value" << std::endl
+        oss << "-qmin        Min QP value" << std::endl
             << "-qmax        Max QP value" << std::endl
             << "-initqp      Initial QP value" << std::endl;
         if (!bLowLatency)
@@ -127,12 +155,21 @@ public:
         return oss.str();
     }
 
+    /**
+     * @brief Generate and return a string describing the values of the main/common
+     *        encoder initialization parameters
+     */
     std::string MainParamToString(const NV_ENC_INITIALIZE_PARAMS *pParams) {
         std::ostringstream os;
         os 
             << "Encoding Parameters:" 
             << std::endl << "\tcodec        : " << ConvertValueToString(vCodec, szCodecNames, pParams->encodeGUID)
-            << std::endl << "\tpreset       : " << ConvertValueToString(vPreset, szPresetNames, pParams->presetGUID)
+            << std::endl << "\tpreset       : " << ConvertValueToString(vPreset, szPresetNames, pParams->presetGUID);
+        if (pParams->tuningInfo)
+        {
+            os << std::endl << "\ttuningInfo   : " << ConvertValueToString(vTuningInfo, szTuningInfoNames, pParams->tuningInfo);
+        }
+        os
             << std::endl << "\tprofile      : " << ConvertValueToString(vProfile, szProfileNames, pParams->encodeConfig->profileGUID)
             << std::endl << "\tchroma       : " << ConvertValueToString(vChroma, szChromaNames, (pParams->encodeGUID == NV_ENC_CODEC_H264_GUID) ? pParams->encodeConfig->encodeCodecConfig.h264Config.chromaFormatIDC : pParams->encodeConfig->encodeCodecConfig.hevcConfig.chromaFormatIDC)
             << std::endl << "\tbitdepth     : " << ((pParams->encodeGUID == NV_ENC_CODEC_H264_GUID) ? 0 : pParams->encodeConfig->encodeCodecConfig.hevcConfig.pixelBitDepthMinus8) + 8
@@ -145,6 +182,7 @@ public:
             << std::endl << "\tfps          : " << pParams->frameRateNum << "/" << pParams->frameRateDen
             << std::endl << "\tgop          : " << (pParams->encodeConfig->gopLength == NVENC_INFINITE_GOPLENGTH ? "INF" : std::to_string(pParams->encodeConfig->gopLength))
             << std::endl << "\tbf           : " << pParams->encodeConfig->frameIntervalP - 1
+            << std::endl << "\tmultipass    : " << pParams->encodeConfig->rcParams.multiPass
             << std::endl << "\tsize         : " << pParams->encodeWidth << "x" << pParams->encodeHeight
             << std::endl << "\tbitrate      : " << pParams->encodeConfig->rcParams.averageBitRate
             << std::endl << "\tmaxbitrate   : " << pParams->encodeConfig->rcParams.maxBitRate
@@ -153,10 +191,10 @@ public:
             << std::endl << "\taq           : " << (pParams->encodeConfig->rcParams.enableAQ ? (pParams->encodeConfig->rcParams.aqStrength ? std::to_string(pParams->encodeConfig->rcParams.aqStrength) : "auto") : "disabled")
             << std::endl << "\ttemporalaq   : " << (pParams->encodeConfig->rcParams.enableTemporalAQ ? "enabled" : "disabled")
             << std::endl << "\tlookahead    : " << (pParams->encodeConfig->rcParams.enableLookahead ? std::to_string(pParams->encodeConfig->rcParams.lookaheadDepth) : "disabled")
-            << std::endl << "\tcq           : " << (int)pParams->encodeConfig->rcParams.targetQuality
-            << std::endl << "\tqmin         : P,B,I=" << pParams->encodeConfig->rcParams.minQP.qpInterP << "," << pParams->encodeConfig->rcParams.minQP.qpInterB << "," << pParams->encodeConfig->rcParams.minQP.qpIntra
-            << std::endl << "\tqmax         : P,B,I=" << pParams->encodeConfig->rcParams.maxQP.qpInterP << "," << pParams->encodeConfig->rcParams.maxQP.qpInterB << "," << pParams->encodeConfig->rcParams.maxQP.qpIntra
-            << std::endl << "\tinitqp       : P,B,I=" << pParams->encodeConfig->rcParams.initialRCQP.qpInterP << "," << pParams->encodeConfig->rcParams.initialRCQP.qpInterB << "," << pParams->encodeConfig->rcParams.initialRCQP.qpIntra
+            << std::endl << "\tcq           : " << (unsigned int)pParams->encodeConfig->rcParams.targetQuality
+            << std::endl << "\tqmin         : P,B,I=" << (int)pParams->encodeConfig->rcParams.minQP.qpInterP << "," << (int)pParams->encodeConfig->rcParams.minQP.qpInterB << "," << (int)pParams->encodeConfig->rcParams.minQP.qpIntra
+            << std::endl << "\tqmax         : P,B,I=" << (int)pParams->encodeConfig->rcParams.maxQP.qpInterP << "," << (int)pParams->encodeConfig->rcParams.maxQP.qpInterB << "," << (int)pParams->encodeConfig->rcParams.maxQP.qpIntra
+            << std::endl << "\tinitqp       : P,B,I=" << (int)pParams->encodeConfig->rcParams.initialRCQP.qpInterP << "," << (int)pParams->encodeConfig->rcParams.initialRCQP.qpInterB << "," << (int)pParams->encodeConfig->rcParams.initialRCQP.qpIntra
             ;
         return os.str();
     }
@@ -164,6 +202,14 @@ public:
 public:
     virtual GUID GetEncodeGUID() { return guidCodec; }
     virtual GUID GetPresetGUID() { return guidPreset; }
+    virtual NV_ENC_TUNING_INFO GetTuningInfo() { return m_TuningInfo; }
+
+    /*
+     * @brief Set encoder initialization parameters based on input options
+     * This method parses the tokens formed from the command line options
+     * provided to the application and sets the fields from NV_ENC_INITIALIZE_PARAMS
+     * based on the supplied values.
+     */
     virtual void SetInitParams(NV_ENC_INITIALIZE_PARAMS *pParams, NV_ENC_BUFFER_FORMAT eBufferFormat)
     {
         NV_ENC_CONFIG &config = *pParams->encodeConfig;
@@ -172,6 +218,8 @@ public:
             if (
                 tokens[i] == "-codec"      && ++i ||
                 tokens[i] == "-preset"     && ++i ||
+                tokens[i] == "-tuninginfo" && ++i ||
+                tokens[i] == "-multipass" && ++i != tokens.size() && ParseString("-multipass", tokens[i], vMultiPass, szMultipass, &config.rcParams.multiPass) ||
                 tokens[i] == "-profile"    && ++i != tokens.size() && (IsCodecH264() ? 
                     ParseString("-profile", tokens[i], vH264Profile, szH264ProfileNames, &config.profileGUID) : 
                     ParseString("-profile", tokens[i], vHevcProfile, szHevcProfileNames, &config.profileGUID)) ||
@@ -182,7 +230,6 @@ public:
                 tokens[i] == "-maxbitrate" && ++i != tokens.size() && ParseBitRate("-maxbitrate", tokens[i], &config.rcParams.maxBitRate)                                                 ||
                 tokens[i] == "-vbvbufsize" && ++i != tokens.size() && ParseBitRate("-vbvbufsize", tokens[i], &config.rcParams.vbvBufferSize)                                              ||
                 tokens[i] == "-vbvinit"    && ++i != tokens.size() && ParseBitRate("-vbvinit",    tokens[i], &config.rcParams.vbvInitialDelay)                                            ||
-                tokens[i] == "-lookahead"  && ++i != tokens.size() && ParseInt("-lookahead",      tokens[i], &config.rcParams.lookaheadDepth) && (config.rcParams.enableLookahead = true) ||
                 tokens[i] == "-cq"         && ++i != tokens.size() && ParseInt("-cq",             tokens[i], &config.rcParams.targetQuality)                                              ||
                 tokens[i] == "-initqp"     && ++i != tokens.size() && ParseQp("-initqp",          tokens[i], &config.rcParams.initialRCQP) && (config.rcParams.enableInitialRCQP = true)  ||
                 tokens[i] == "-qmin"       && ++i != tokens.size() && ParseQp("-qmin",            tokens[i], &config.rcParams.minQP) && (config.rcParams.enableMinQP = true)              ||
@@ -191,6 +238,11 @@ public:
                 tokens[i] == "-temporalaq" && (config.rcParams.enableTemporalAQ = true)
             )
             {
+                continue;
+            }
+            if (tokens[i] == "-lookahead" && ++i != tokens.size() && ParseInt("-lookahead", tokens[i], &config.rcParams.lookaheadDepth))
+            {
+                config.rcParams.enableLookahead = config.rcParams.lookaheadDepth > 0;
                 continue;
             }
             int aqStrength;
@@ -247,6 +299,10 @@ public:
     }
 
 private:
+    /*
+     * Helper methods for parsing tokens (generated by splitting the command line)
+     * and performing conversions to the appropriate target type/value.
+     */
     template<typename T>
     bool ParseString(const std::string &strName, const std::string &strValue, const std::vector<T> &vValue, const std::string &strValueNames, T *pValue) {
         std::vector<std::string> vstrValueName = split(strValueNames, ' ');
@@ -323,7 +379,8 @@ private:
     std::function<void(NV_ENC_INITIALIZE_PARAMS *pParams)> funcInit = [](NV_ENC_INITIALIZE_PARAMS *pParams){};
     std::vector<std::string> tokens;
     GUID guidCodec = NV_ENC_CODEC_H264_GUID;
-    GUID guidPreset = NV_ENC_PRESET_DEFAULT_GUID;
+    GUID guidPreset = NV_ENC_PRESET_P3_GUID;
+    NV_ENC_TUNING_INFO m_TuningInfo = NV_ENC_TUNING_INFO_HIGH_QUALITY;
     bool bLowLatency = false;
     
     const char *szCodecNames = "h264 hevc";
@@ -338,24 +395,15 @@ private:
         1, 3
     };
     
-    const char *szPresetNames = "default hp hq bd ll ll_hp ll_hq lossless lossless_hp";
-    const char *szLowLatencyPresetNames = "ll ll_hp ll_hq";
+    const char *szPresetNames = "p1 p2 p3 p4 p5 p6 p7";
     std::vector<GUID> vPreset = std::vector<GUID> {
-        NV_ENC_PRESET_DEFAULT_GUID,
-        NV_ENC_PRESET_HP_GUID,
-        NV_ENC_PRESET_HQ_GUID,
-        NV_ENC_PRESET_BD_GUID,
-        NV_ENC_PRESET_LOW_LATENCY_DEFAULT_GUID,
-        NV_ENC_PRESET_LOW_LATENCY_HP_GUID,
-        NV_ENC_PRESET_LOW_LATENCY_HQ_GUID,
-        NV_ENC_PRESET_LOSSLESS_DEFAULT_GUID,
-        NV_ENC_PRESET_LOSSLESS_HP_GUID
-    };
-
-    std::vector<GUID> vLowLatencyPreset = std::vector<GUID> {
-            NV_ENC_PRESET_LOW_LATENCY_DEFAULT_GUID,
-            NV_ENC_PRESET_LOW_LATENCY_HP_GUID,
-            NV_ENC_PRESET_LOW_LATENCY_HQ_GUID,
+        NV_ENC_PRESET_P1_GUID,
+        NV_ENC_PRESET_P2_GUID,
+        NV_ENC_PRESET_P3_GUID,
+        NV_ENC_PRESET_P4_GUID,
+        NV_ENC_PRESET_P5_GUID,
+        NV_ENC_PRESET_P6_GUID,
+        NV_ENC_PRESET_P7_GUID,
     };
 
     const char *szH264ProfileNames = "baseline main high high444";
@@ -372,7 +420,7 @@ private:
         NV_ENC_HEVC_PROFILE_FREXT_GUID,
     };
     const char *szProfileNames = "(default) auto baseline(h264) main(h264) high(h264) high444(h264)"
-        " stereo(h264) svc_temporal_scalability(h264) progressiv_high(h264) constrained_high(h264)"
+        " stereo(h264) progressiv_high(h264) constrained_high(h264)"
         " main(hevc) main10(hevc) frext(hevc)";
     std::vector<GUID> vProfile = std::vector<GUID> {
         GUID{},
@@ -382,7 +430,6 @@ private:
         NV_ENC_H264_PROFILE_HIGH_GUID,
         NV_ENC_H264_PROFILE_HIGH_444_GUID,
         NV_ENC_H264_PROFILE_STEREO_GUID,
-        NV_ENC_H264_PROFILE_SVC_TEMPORAL_SCALABILTY,
         NV_ENC_H264_PROFILE_PROGRESSIVE_HIGH_GUID,
         NV_ENC_H264_PROFILE_CONSTRAINED_HIGH_GUID,
         NV_ENC_HEVC_PROFILE_MAIN_GUID,
@@ -390,17 +437,30 @@ private:
         NV_ENC_HEVC_PROFILE_FREXT_GUID,
     };
 
-    const char *szRcModeNames = "constqp vbr cbr cbr_ll_hq cbr_hq vbr_hq";
+    const char *szLowLatencyTuningInfoNames = "lowlatency ultralowlatency";
+    const char *szTuningInfoNames = "hq lowlatency ultralowlatency lossless";
+    std::vector<NV_ENC_TUNING_INFO> vTuningInfo = std::vector<NV_ENC_TUNING_INFO>{
+        NV_ENC_TUNING_INFO_HIGH_QUALITY,
+        NV_ENC_TUNING_INFO_LOW_LATENCY,
+        NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY,
+        NV_ENC_TUNING_INFO_LOSSLESS
+    };
+
+    const char *szRcModeNames = "constqp vbr cbr";
     std::vector<NV_ENC_PARAMS_RC_MODE> vRcMode = std::vector<NV_ENC_PARAMS_RC_MODE> {
         NV_ENC_PARAMS_RC_CONSTQP,
         NV_ENC_PARAMS_RC_VBR,
         NV_ENC_PARAMS_RC_CBR,
-        NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ,
-        NV_ENC_PARAMS_RC_CBR_HQ,
-        NV_ENC_PARAMS_RC_VBR_HQ,
     };
 
-    const char *szQpMapModeNames = "disabled emphasis_level_map delta_qp_map qp_map";
+    const char *szMultipass = "disabled qres fullres";
+    std::vector<NV_ENC_MULTI_PASS> vMultiPass = std::vector<NV_ENC_MULTI_PASS>{
+        NV_ENC_MULTI_PASS_DISABLED,
+        NV_ENC_TWO_PASS_QUARTER_RESOLUTION,
+        NV_ENC_TWO_PASS_FULL_RESOLUTION,
+    };
+
+   const char *szQpMapModeNames = "disabled emphasis_level_map delta_qp_map qp_map";
     std::vector<NV_ENC_QP_MAP_MODE> vQpMapMode = std::vector<NV_ENC_QP_MAP_MODE> {
         NV_ENC_QP_MAP_DISABLED,
         NV_ENC_QP_MAP_EMPHASIS,
@@ -410,11 +470,21 @@ private:
 
 
 public:
+    /*
+     * Generates and returns a string describing the values for each field in
+     * the NV_ENC_INITIALIZE_PARAMS structure (i.e. a description of the entire
+     * set of initialization parameters supplied to the API).
+     */
     std::string FullParamToString(const NV_ENC_INITIALIZE_PARAMS *pInitializeParams) {
         std::ostringstream os;
         os << "NV_ENC_INITIALIZE_PARAMS:" << std::endl
             << "encodeGUID: " << ConvertValueToString(vCodec, szCodecNames, pInitializeParams->encodeGUID) << std::endl
-            << "presetGUID: " << ConvertValueToString(vPreset, szPresetNames, pInitializeParams->presetGUID) << std::endl
+            << "presetGUID: " << ConvertValueToString(vPreset, szPresetNames, pInitializeParams->presetGUID) << std::endl;
+        if (pInitializeParams->tuningInfo)
+        {
+            os << "tuningInfo: " << ConvertValueToString(vTuningInfo, szTuningInfoNames, pInitializeParams->tuningInfo) << std::endl;
+        }
+        os
             << "encodeWidth: " << pInitializeParams->encodeWidth << std::endl
             << "encodeHeight: " << pInitializeParams->encodeHeight << std::endl
             << "darWidth: " << pInitializeParams->darWidth << std::endl
@@ -451,6 +521,7 @@ public:
             << "    enableInitialRCQP: " << pConfig->rcParams.enableInitialRCQP << std::endl
             << "    enableAQ: " << pConfig->rcParams.enableAQ << std::endl
             << "    qpMapMode: " << ConvertValueToString(vQpMapMode, szQpMapModeNames, pConfig->rcParams.qpMapMode) << std::endl
+            << "    multipass: " << ConvertValueToString(vMultiPass, szMultipass, pConfig->rcParams.multiPass) << std::endl
             << "    enableLookahead: " << pConfig->rcParams.enableLookahead << std::endl
             << "    disableIadapt: " << pConfig->rcParams.disableIadapt << std::endl
             << "    disableBadapt: " << pConfig->rcParams.disableBadapt << std::endl
@@ -464,12 +535,11 @@ public:
             << "    initialRCQP: " << pConfig->rcParams.initialRCQP.qpInterP << ", " << pConfig->rcParams.initialRCQP.qpInterB << ", " << pConfig->rcParams.initialRCQP.qpIntra << std::endl
             << "    temporallayerIdxMask: " << pConfig->rcParams.temporallayerIdxMask << std::endl
             << "    temporalLayerQP: " << (int)pConfig->rcParams.temporalLayerQP[0] << ", " << (int)pConfig->rcParams.temporalLayerQP[1] << ", " << (int)pConfig->rcParams.temporalLayerQP[2] << ", " << (int)pConfig->rcParams.temporalLayerQP[3] << ", " << (int)pConfig->rcParams.temporalLayerQP[4] << ", " << (int)pConfig->rcParams.temporalLayerQP[5] << ", " << (int)pConfig->rcParams.temporalLayerQP[6] << ", " << (int)pConfig->rcParams.temporalLayerQP[7] << std::endl
-            << "    targetQuality: " << (int)pConfig->rcParams.targetQuality << std::endl
+            << "    targetQuality: " << pConfig->rcParams.targetQuality << std::endl
             << "    lookaheadDepth: " << pConfig->rcParams.lookaheadDepth << std::endl;
         if (pInitializeParams->encodeGUID == NV_ENC_CODEC_H264_GUID) {
             os  
             << "NV_ENC_CODEC_CONFIG (H264):" << std::endl
-            << "    enableTemporalSVC: " << pConfig->encodeCodecConfig.h264Config.enableTemporalSVC << std::endl
             << "    enableStereoMVC: " << pConfig->encodeCodecConfig.h264Config.enableStereoMVC << std::endl
             << "    hierarchicalPFrames: " << pConfig->encodeCodecConfig.h264Config.hierarchicalPFrames << std::endl
             << "    hierarchicalBFrames: " << pConfig->encodeCodecConfig.h264Config.hierarchicalBFrames << std::endl
@@ -491,7 +561,6 @@ public:
             << "    separateColourPlaneFlag: " << pConfig->encodeCodecConfig.h264Config.separateColourPlaneFlag << std::endl
             << "    disableDeblockingFilterIDC: " << pConfig->encodeCodecConfig.h264Config.disableDeblockingFilterIDC << std::endl
             << "    numTemporalLayers: " << pConfig->encodeCodecConfig.h264Config.numTemporalLayers << std::endl
-            << "    enableTemporalSVC: " << pConfig->encodeCodecConfig.h264Config.enableTemporalSVC << std::endl
             << "    spsId: " << pConfig->encodeCodecConfig.h264Config.spsId << std::endl
             << "    ppsId: " << pConfig->encodeCodecConfig.h264Config.ppsId << std::endl
             << "    adaptiveTransformMode: " << pConfig->encodeCodecConfig.h264Config.adaptiveTransformMode << std::endl

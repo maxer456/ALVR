@@ -190,7 +190,8 @@ void VideoEncoderNVENC::FillEncodeConfig(NV_ENC_INITIALIZE_PARAMS &initializePar
 	// 7. Intra refresh
 	// 8. Adaptive quantization(AQ) enabled
 
-	m_NvNecoder->CreateDefaultEncoderParams(&initializeParams, EncoderGUID, NV_ENC_PRESET_LOW_LATENCY_HQ_GUID);
+	//m_NvNecoder->CreateDefaultEncoderParams(&initializeParams, EncoderGUID, NV_ENC_PRESET_LOW_LATENCY_HQ_GUID);
+	m_NvNecoder->CreateDefaultEncoderParams(&initializeParams, EncoderGUID, NV_ENC_PRESET_P7_GUID, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY);
 
 	initializeParams.encodeWidth = initializeParams.darWidth = renderWidth;
 	initializeParams.encodeHeight = initializeParams.darHeight = renderHeight;
@@ -247,7 +248,10 @@ void VideoEncoderNVENC::FillEncodeConfig(NV_ENC_INITIALIZE_PARAMS &initializePar
 
 	// NV_ENC_PARAMS_RC_CBR_HQ is equivalent to NV_ENC_PARAMS_RC_2_PASS_FRAMESIZE_CAP.
 	//encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ;// NV_ENC_PARAMS_RC_CBR_HQ;
-	encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ;
+	//encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ;
+	encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
+	encodeConfig.rcParams.multiPass = NV_ENC_TWO_PASS_QUARTER_RESOLUTION;
+	encodeConfig.rcParams.lowDelayKeyFrameScale = 1;
 	uint32_t maxFrameSize = static_cast<uint32_t>(bitrate.toBits() / refreshRate);
 	Debug("VideoEncoderNVENC: maxFrameSize=%d bits\n", maxFrameSize);
 	encodeConfig.rcParams.vbvBufferSize = maxFrameSize;
